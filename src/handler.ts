@@ -578,30 +578,121 @@ export class LoadBalancer extends DurableObject {
 				case 'system':
 					system_instruction = { parts: await this.transformMsg(item) };
 					continue;
+				
 				case 'assistant':
-					item.role = 'model';
-					break;
+					item.role = 'model'; // Gemini API 使用 'model'
+					
+					// 检查是否是 OpenAI 的工具调用请求 (来自聊天记录)
+					if (item.tool_calls) {
+						// 仅处理第一个工具调用
+						const toolCall = item.tool_calls[0];
+						contents.push({
+							role: 'model',
+							parts: [{
+								functionCall: {
+									name: toolCall.function.name,
+									// 'arguments' 是一个 JSON 字符串，Gemini 需要一个 object
+									args: JSON.parse(toolCall.function.arguments)
+								}
+							}]
+						});
+					}
+					// 否则，是普通的文本/图像消息
+					else {
+						contents.push({
+							role: 'model',
+							parts: await this.transformMsg(item),
+						});
+					}
+					break; // 'assistant' case 结束
+
 				case 'user':
+					if (system_instruction) {
+						if (!contents[0]?.parts || (Array.isArray(contents[0]?.parts) && !contents[0]?.parts.some((part: any) => part.text))) {
+							contents.unshift({ role: 'user', parts: [{ text: ' ' }] });
+						}
+					}
+					contents.push({
+						role: item.role,
+						parts: await this.transformMsg(item),
+					});
+					break; // 'user' case 结束
+
+				// --- 这是我们添加的新 'case' ---
+				// 处理工具执行的返回结果
+				
+				case 'tool': // 新版 OpenAI 规范 (来自我们的 Python 客户端)
+					contents.push({
+						role: 'function', // Gemini API 称之为 'function'
+						parts: [{
+							functionResponse: {
+								name: item.name, // Python 客户端发送了 'name'
+								// Gemini 'response' 需要一个 object,
+								// OpenAI 'content' 是一个 JSON 字符串 (例如 "30")
+								// 我们将其包装在一个对象中
+								response: { result: item.content } 
+							}
+						}]
+					});
 					break;
+				
+				case 'function': // 旧版 OpenAI 规范 (也加上以防万一)
+					contents.push({
+						role: 'function',
+						parts: [{
+							functionResponse: {
+								name: item.name,
+								response: { result: item.content }
+							}
+						}]
+					});
+					break;
+				// --- 新 'case' 结束 ---
+
 				default:
 					throw new HttpError(`Unknown message role: "${item.role}"`, 400);
 			}
-
-			if (system_instruction) {
-				// 修复：确保 parts 是数组后再调用 some 方法
-				if (!contents[0]?.parts || (Array.isArray(contents[0]?.parts) && !contents[0]?.parts.some((part: any) => part.text))) {
-					contents.unshift({ role: 'user', parts: [{ text: ' ' }] });
-				}
-			}
-
-			contents.push({
-				role: item.role,
-				parts: await this.transformMsg(item),
-			});
 		}
 
 		return { system_instruction, contents };
 	}
+	// private async transformMessages(messages: any[]) {
+	// 	if (!messages) {
+	// 		return {};
+	// 	}
+
+	// 	const contents: any[] = [];
+	// 	let system_instruction;
+
+	// 	for (const item of messages) {
+	// 		switch (item.role) {
+	// 			case 'system':
+	// 				system_instruction = { parts: await this.transformMsg(item) };
+	// 				continue;
+	// 			case 'assistant':
+	// 				item.role = 'model';
+	// 				break;
+	// 			case 'user':
+	// 				break;
+	// 			default:
+	// 				throw new HttpError(`Unknown message role: "${item.role}"`, 400);
+	// 		}
+
+	// 		if (system_instruction) {
+	// 			// 修复：确保 parts 是数组后再调用 some 方法
+	// 			if (!contents[0]?.parts || (Array.isArray(contents[0]?.parts) && !contents[0]?.parts.some((part: any) => part.text))) {
+	// 				contents.unshift({ role: 'user', parts: [{ text: ' ' }] });
+	// 			}
+	// 		}
+
+	// 		contents.push({
+	// 			role: item.role,
+	// 			parts: await this.transformMsg(item),
+	// 		});
+	// 	}
+
+	// 	return { system_instruction, contents };
+	// }
 
 	private async transformMsg({ content }: any) {
 		const parts = [];
