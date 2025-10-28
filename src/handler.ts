@@ -717,27 +717,37 @@ export class LoadBalancer extends DurableObject {
 			SAFETY: 'content_filter',
 			RECITATION: 'content_filter',
 		};
-
 		const transformCandidatesMessage = (cand: any) => {
-			const message = { role: 'assistant', content: [] as string[] };
+			// const message = { role: 'assistant', content: [] as string[] }; // (旧代码)
 			let reasoningContent = '';
 			let finalContent = '';
+			let toolCalls: any[] = []; // <-- 修复 1: 准备一个数组来存放工具调用
 
 			for (const part of cand.content?.parts ?? []) {
-				if (part.text) {
-					// 检查是否是思考内容
-					// Gemini API 可能使用多种方式标识思考内容
+				
+				// --- 修复 2: 检查 part.functionCall ---
+				if (part.functionCall) {
+					toolCalls.push({
+						id: "call_" + this.generateId(), // OpenAI 需要一个 tool_call_id
+						type: "function",
+						function: {
+							name: part.functionCall.name,
+							// Gemini 返回的是 object, OpenAI 需要一个 JSON 字符串
+							arguments: JSON.stringify(part.functionCall.args)
+						}
+					});
+				
+				} 
+				// --- (检查 part.text 的旧逻辑保持不变) ---
+				else if (part.text) {
 					const isThoughtContent =
 						part.thoughtToken ||
 						part.thought ||
 						part.thoughtTokens ||
 						(part.executableCode && part.executableCode.language === 'thought') ||
-						// 检查文本是否以思考标记开头
 						(part.text && (part.text.startsWith('<thinking>') || part.text.startsWith('思考：') || part.text.startsWith('Thinking:')));
 
 					if (isThoughtContent) {
-						// 这是思考内容，应该放在 reasoning_content 字段中
-						// 如果文本包含思考标记，需要移除这些标记
 						let cleanText = part.text;
 						if (cleanText.startsWith('<thinking>')) {
 							cleanText = cleanText.replace('<thinking>', '').replace('</thinking>', '');
@@ -748,7 +758,6 @@ export class LoadBalancer extends DurableObject {
 						}
 						reasoningContent += cleanText;
 					} else {
-						// 这是正常的回答内容
 						finalContent += part.text;
 					}
 				}
@@ -764,13 +773,72 @@ export class LoadBalancer extends DurableObject {
 				finish_reason: reasonsMap[cand.finishReason] || cand.finishReason,
 			};
 
-			// 如果有思考内容，添加到响应中
+			// --- 修复 3: 将 'tool_calls' 附加到 message 对象 ---
+			if (toolCalls.length > 0) {
+				messageObj.message.tool_calls = toolCalls;
+				// 如果有工具调用，OpenAI 规范要求 content 必须是 null
+				messageObj.message.content = null; 
+			}
+
 			if (reasoningContent) {
 				messageObj.message.reasoning_content = reasoningContent;
 			}
 
 			return messageObj;
 		};
+		// const transformCandidatesMessage = (cand: any) => {
+		// 	const message = { role: 'assistant', content: [] as string[] };
+		// 	let reasoningContent = '';
+		// 	let finalContent = '';
+
+		// 	for (const part of cand.content?.parts ?? []) {
+		// 		if (part.text) {
+		// 			// 检查是否是思考内容
+		// 			// Gemini API 可能使用多种方式标识思考内容
+		// 			const isThoughtContent =
+		// 				part.thoughtToken ||
+		// 				part.thought ||
+		// 				part.thoughtTokens ||
+		// 				(part.executableCode && part.executableCode.language === 'thought') ||
+		// 				// 检查文本是否以思考标记开头
+		// 				(part.text && (part.text.startsWith('<thinking>') || part.text.startsWith('思考：') || part.text.startsWith('Thinking:')));
+
+		// 			if (isThoughtContent) {
+		// 				// 这是思考内容，应该放在 reasoning_content 字段中
+		// 				// 如果文本包含思考标记，需要移除这些标记
+		// 				let cleanText = part.text;
+		// 				if (cleanText.startsWith('<thinking>')) {
+		// 					cleanText = cleanText.replace('<thinking>', '').replace('</thinking>', '');
+		// 				} else if (cleanText.startsWith('思考：')) {
+		// 					cleanText = cleanText.replace('思考：', '');
+		// 				} else if (cleanText.startsWith('Thinking:')) {
+		// 					cleanText = cleanText.replace('Thinking:', '');
+		// 				}
+		// 				reasoningContent += cleanText;
+		// 			} else {
+		// 				// 这是正常的回答内容
+		// 				finalContent += part.text;
+		// 			}
+		// 		}
+		// 	}
+
+		// 	const messageObj: any = {
+		// 		index: cand.index || 0,
+		// 		message: {
+		// 			role: 'assistant',
+		// 			content: finalContent || null,
+		// 		},
+		// 		logprobs: null,
+		// 		finish_reason: reasonsMap[cand.finishReason] || cand.finishReason,
+		// 	};
+
+		// 	// 如果有思考内容，添加到响应中
+		// 	if (reasoningContent) {
+		// 		messageObj.message.reasoning_content = reasoningContent;
+		// 	}
+
+		// 	return messageObj;
+		// };
 
 		const obj = {
 			id,
