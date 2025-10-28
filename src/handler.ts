@@ -675,12 +675,14 @@ export class LoadBalancer extends DurableObject {
 			return;
 		}
 		if (Array.isArray(schemaPart)) {
-			schemaPart.forEach(this.adjustProps);
+			// schemaPart.forEach(this.adjustProps);
+			schemaPart.forEach((part) => this.adjustProps(part));
 		} else {
 			if (schemaPart.type === 'object' && schemaPart.properties && schemaPart.additionalProperties === false) {
 				delete schemaPart.additionalProperties;
 			}
-			Object.values(schemaPart).forEach(this.adjustProps);
+			// Object.values(schemaPart).forEach(this.adjustProps);
+			Object.values(schemaPart).forEach((value) => this.adjustProps(value));
 		}
 	}
 
@@ -689,7 +691,8 @@ export class LoadBalancer extends DurableObject {
 		if (req.tools) {
 			const funcs = req.tools.filter((tool: any) => tool.type === 'function' && tool.function?.name !== 'googleSearch');
 			if (funcs.length > 0) {
-				funcs.forEach(this.adjustSchema);
+				// funcs.forEach(this.adjustSchema);
+				funcs.forEach((schema) => this.adjustSchema(schema));
 				tools = [{ function_declarations: funcs.map((schema: any) => schema.function) }];
 			}
 		}
